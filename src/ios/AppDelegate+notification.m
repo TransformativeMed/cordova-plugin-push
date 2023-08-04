@@ -63,9 +63,40 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
                                                 name:UIApplicationDidBecomeActiveNotification
                                               object:nil];
 
+    // Cordova Plugin Push issue #1. Define a listener for the UIApplicationDidFinishLaunchingNotification event that will be invoked when the app has  
+    // finished launching and ready to present any windows to the user (according to the lifecycle of the iOS app).
+    // https://github.com/TransformativeMed/cordova-plugin-push/issues/1
+    // Helpful documentation about lifecycle: https://medium.com/@theiOSzone/briefly-about-the-ios-application-lifecycle-92f0c830b754
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(getDataNotificationLaunchedApp:)
+                                                 name:UIApplicationDidFinishLaunchingNotification
+                                               object:nil];
+
     // This actually calls the original init method over in AppDelegate. Equivilent to calling super
     // on an overrided method, this is not recursive, although it appears that way. neat huh?
     return [self pushPluginSwizzledInit];
+}
+
+// Cordova Plugin Push issues #1. This code will be called immediately after UIApplicationDidFinishLaunchingNotification event once the app is opened/loaded correctly.
+// https://github.com/TransformativeMed/cordova-plugin-push/issues/1
+// 
+- (void)getDataNotificationLaunchedApp:(NSNotification *)notification {
+    
+    // Check if the app has the following option permissions to display Normal/Critical Push Notifications on screen (sent via APNS), even if the app is on foreground.
+    [UNUserNotificationCenter currentNotificationCenter].delegate = self;
+    // - UNAuthorizationOptionAlert: Show notifications on screen.
+    // - UNAuthorizationOptionCriticalAlert: Show critical notifications on screen.
+    // - UNAuthorizationOptionSound: Play a sound when the app receives a notification (no matter the type).
+    // - UNAuthorizationOptionBadge: Update the badge number when a notifications arrives.
+    UNAuthorizationOptions authOptions = UNAuthorizationOptionAlert | UNAuthorizationOptionCriticalAlert | UNAuthorizationOptionSound  | UNAuthorizationOptionBadge;
+    [[UNUserNotificationCenter currentNotificationCenter] requestAuthorizationWithOptions:authOptions completionHandler:^(BOOL granted, NSError * _Nullable error) {
+        if(!error){
+            
+            // The following line allows us to capture the push notification in the app.
+            [[UIApplication sharedApplication] registerForRemoteNotifications];
+        }
+    }];
+
 }
 
 - (void)application:(UIApplication *)application didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken {
