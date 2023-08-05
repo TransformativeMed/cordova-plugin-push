@@ -39,6 +39,9 @@
 @synthesize notificationMessage;
 @synthesize isInline;
 @synthesize coldstart;
+@synthesize isTapped;
+@synthesize notificationIDsToOpen;
+@synthesize notificationsGroupedContentList;
 
 @synthesize callbackId;
 @synthesize notificationCallbackId;
@@ -211,7 +214,12 @@
             } else {
                 NSLog(@"PushPlugin.register: setting badge to true");
                 clearBadge = YES;
-                [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
+                //zero badge
+                // Cordova Plugin Push issues #3. DON'T remove the notifications from the OS tray until they are discarded or opened by the user. Only clean the badge number of the app.
+                // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from the tray should be avoided.
+                // To clear the badge number without remove the notifications from the tray we need to set -1 instead of 0
+                // https://developer.apple.com/forums/thread/7598
+                [[UIApplication sharedApplication] setApplicationIconBadgeNumber:-1];
             }
             NSLog(@"PushPlugin.register: clear badge is set to %d", clearBadge);
 
@@ -405,6 +413,8 @@
 
     if (notificationMessage && self.callbackId != nil)
     {
+        // Single notification.
+
         NSMutableDictionary* message = [NSMutableDictionary dictionaryWithCapacity:4];
         NSMutableDictionary* additionalData = [NSMutableDictionary dictionaryWithCapacity:4];
 
@@ -462,6 +472,13 @@
             [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"coldstart"];
         }
 
+         if(isTapped){
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"isTapped"];
+            
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"isTapped"];
+        }
+
         [message setObject:additionalData forKey:@"additionalData"];
 
         // send notification message
@@ -471,6 +488,50 @@
 
         self.coldstart = NO;
         self.notificationMessage = nil;
+        self.isTapped = NO;
+
+    } else {
+            
+        // Cordova Plugin Push issue #3. Handle the data of the grouper notification that was pressed by the user. It will have:
+        // - The list of "notification_id" that were grouped, since these will be used by the CORES Mobile app to display them in the Inbox list page.
+
+        // Notification grouper.
+        
+        NSMutableDictionary* message = [NSMutableDictionary dictionaryWithCapacity:4];
+        NSMutableDictionary* additionalData = [NSMutableDictionary dictionaryWithCapacity:4];
+        
+        if (isInline) {
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"foreground"];
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"foreground"];
+        }
+
+        if (coldstart) {
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"coldstart"];
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"coldstart"];
+        }
+        
+        if(isTapped){
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"isTapped"];
+            
+            [additionalData setObject:notificationsGroupedContentList forKey:@"notificationsGroupedContentList"];
+            
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"isTapped"];
+        }
+        
+        [message setObject:additionalData forKey:@"additionalData"];
+        
+        // send notification message
+        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:message];
+        [pluginResult setKeepCallbackAsBool:YES];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
+
+        self.coldstart = NO;
+        self.notificationMessage = nil;
+        self.isTapped = NO;
+
     }
 }
 
@@ -518,7 +579,12 @@
 
 - (void)clearAllNotifications:(CDVInvokedUrlCommand *)command
 {
-    [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
+    //zero badge
+    // Cordova Plugin Push issues #3. DON'T remove the notifications from the OS tray until they are discarded or opened by the user. Only clean the badge number of the app.
+    // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from the tray should be avoided.
+    // To clear the badge number without remove the notifications from the tray we need to set -1 instead of 0
+    // https://developer.apple.com/forums/thread/7598
+    [[UIApplication sharedApplication] setApplicationIconBadgeNumber:-1];
 
     NSString* message = [NSString stringWithFormat:@"cleared all notifications"];
     CDVPluginResult *commandResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:message];

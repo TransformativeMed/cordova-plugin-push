@@ -109,13 +109,15 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
     [pushHandler didFailToRegisterForRemoteNotificationsWithError:error];
 }
 
+// General listener invoked when a push notification is received on the phone, no matter the app status (foreground, background or stand by/closed),
+// but the FOREGROUND case is ignored, since it will be handled by the "willPresentNotification" event.
 - (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo fetchCompletionHandler:(void (^)(UIBackgroundFetchResult))completionHandler {
     NSLog(@"didReceiveNotification with fetchCompletionHandler");
-
-    // app is in the background or inactive, so only call notification callback if this is a silent push
+    
+    // App is in background or in stand-by, send the data of the received push notification to the CORES Mobile app.
     if (application.applicationState != UIApplicationStateActive) {
 
-        NSLog(@"app in-active");
+        NSLog(@"app in background or stand-by");
 
         // do some convoluted logic to find out if this should be a silent push.
         long silent = 0;
@@ -152,17 +154,44 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
 
             pushHandler.notificationMessage = userInfo;
             pushHandler.isInline = NO;
-            [pushHandler notificationReceived];
+            
+            NSLog(@"didReceiveRemoteNotification in-background ");
+            
+            if([self.coldstart boolValue] == YES){
+                
+                // Cordova Push Plugin issues #3 and #1.
+                // https://github.com/TransformativeMed/cordova-plugin-push/issues/3
+                // https://github.com/TransformativeMed/cordova-plugin-push/issues/1
+                // Wait a few seconds before to send the data of the received push notification to the CORES Mobile JS logic,
+                // since the app was opened from scratch by the OS and and the Cordova plugin may not be available yet.
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [pushHandler notificationReceived];
+                    completionHandler(UIBackgroundFetchResultNewData);
+                });
+                
+            } else {
+                
+                [pushHandler notificationReceived];
+                completionHandler(UIBackgroundFetchResultNewData);
+                
+            }
+            
         } else {
             NSLog(@"just put it in the shade");
             //save it for later
-            self.launchNotification = userInfo;
             completionHandler(UIBackgroundFetchResultNewData);
         }
 
     } else {
         completionHandler(UIBackgroundFetchResultNoData);
     }
+    
+    // Cordova Plugin Push issue #3.
+    // https://github.com/TransformativeMed/cordova-plugin-push/issues/3
+    // Since iOS will automatically group the notifications, we need to create and display a local push notification that will help us to open all notifications
+    // at the same time in the "Notification Viewer" of the CORES Mobile app. But only if there are 1> notifications in the Notification Center of the phone.
+    [self displayOpenAllLocalNotification];
+    
 }
 
 - (void)checkUserHasRemoteNotificationsEnabledWithCompletionHandler:(nonnull void (^)(BOOL))completionHandler
@@ -185,13 +214,19 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
 - (void)pushPluginOnApplicationDidBecomeActive:(NSNotification *)notification {
 
     NSLog(@"active");
-    
+        
     NSString *firstLaunchKey = @"firstLaunchKey";
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:@"phonegap-plugin-push"];
     if (![defaults boolForKey:firstLaunchKey]) {
         NSLog(@"application first launch: remove badge icon number");
         [defaults setBool:YES forKey:firstLaunchKey];
-        [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
+        
+        // Cordova Plugin Push issues #3. DON'T remove the notifications from the OS tray until they are discarded or opened by the user.
+        // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from the tray should be avoided.
+        // https://github.com/TransformativeMed/cordova-plugin-push/issues/3
+        // To clear the badge number without remove the notifications from the tray we need to set -1 instead of 0.
+        // https://developer.apple.com/forums/thread/7598
+        [[UIApplication sharedApplication] setApplicationIconBadgeNumber:-1];
     }
 
     UIApplication *application = notification.object;
@@ -200,7 +235,12 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
     if (pushHandler.clearBadge) {
         NSLog(@"PushPlugin clearing badge");
         //zero badge
-        application.applicationIconBadgeNumber = 0;
+        // Cordova Plugin Push issues #3. DON'T remove the notifications from the OS tray until they are discarded or opened by the user. Only clean the badge number of the app.
+        // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from the tray should be avoided.
+        // https://github.com/TransformativeMed/cordova-plugin-push/issues/3
+        // To clear the badge number without remove the notifications from the tray we need to set -1 instead of 0.
+        // https://developer.apple.com/forums/thread/7598
+        application.applicationIconBadgeNumber = -1;
     } else {
         NSLog(@"PushPlugin skip clear badge");
     }
@@ -213,8 +253,7 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
         self.coldstart = [NSNumber numberWithBool:NO];
         [pushHandler performSelectorOnMainThread:@selector(notificationReceived) withObject:pushHandler waitUntilDone:NO];
     }
-
-    [[NSNotificationCenter defaultCenter] postNotificationName:pushPluginApplicationDidBecomeActiveNotification object:nil];
+        
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
@@ -222,13 +261,246 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler
 {
     NSLog( @"NotificationCenter Handle push from foreground" );
-    // custom code to handle push while app is in the foreground
+    
     PushPlugin *pushHandler = [self getCommandInstance:@"PushNotification"];
     pushHandler.notificationMessage = notification.request.content.userInfo;
     pushHandler.isInline = YES;
+    // Add a custom flag that will be validaded in the CORES Mobile app to indicate this notification was received without any tap event.
+    pushHandler.isTapped = NO;
     [pushHandler notificationReceived];
 
-    completionHandler(UNNotificationPresentationOptionNone);
+    // Cordova Plugin Push issue #3: Always displays the notification in the Notification Center of the phone even if the app is in foreground.
+    // https://github.com/TransformativeMed/cordova-plugin-push/issues/3
+    // Display the notification on the OS tray including the sound and badge number contained in the push notification.
+    completionHandler(UNNotificationPresentationOptionAlert | UNNotificationPresentationOptionSound | UNNotificationPresentationOptionBadge);
+}
+
+// Cordova Push Plugin issues #3. Get the data of the pressed notification (single or grouped notifications) to send it to the CORES Mobile app.
+// https://github.com/TransformativeMed/cordova-plugin-push/issues/3
+- (void) sendResponseDataOfPressedNotification: (NSDictionary *)userInfo : (PushPlugin *) pushHandler {
+    
+    // Check if the notification was sent by the APNS (triggered by the CORES API) or it is a local push notification created by us to let the user open all notifications ("open all" notification).
+    if ( [userInfo objectForKey:@"coresPayload"] ) {
+        
+        // A single notification was pressed. Send its data to the CORES Mobile app, initializing some values as empty and indicating it was tapped.
+        pushHandler.notificationMessage = userInfo;
+        pushHandler.isTapped = YES;
+        pushHandler.notificationIDsToOpen = @"";
+        pushHandler.notificationsGroupedContentList = @"";
+        pushHandler.coldstart = [self.coldstart boolValue];
+        [pushHandler notificationReceived];
+        
+    } else {
+    
+        // This is a local push notification (grouped notifications).
+        // Initialize the data that will be sent to the CORES Mobile app to show all notifications in the Inbox page (the Notification Viewer mode of that component).
+        NSMutableArray *notificationIDlistToOpen = [[NSMutableArray alloc] init];
+        
+        // Iterate the notifications that are currently displayed in the notification center of the phone.
+        [[UNUserNotificationCenter currentNotificationCenter] getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> * _Nonnull notifications) {
+            
+            int notificationsCount = notifications.count;
+            for (int i=0; i<notificationsCount; i++){
+                
+                // Get data of the existing notification that is displayed in the Notification center.
+                UNNotification *existingNotification = [notifications objectAtIndex:i];//notification.request.content.userInfo;
+                
+                NSDictionary *userInfo = existingNotification.request.content.userInfo;
+                
+                for(id key in userInfo) {
+                    
+                    if([key isEqualToString:@"coresPayload"]){
+                        
+                        NSDictionary *coresPayloadObject = [userInfo objectForKey:key];
+                        
+                        for(id coresPayloadKey in coresPayloadObject) {
+                            
+                            if([coresPayloadKey isEqualToString:@"notification_id"]){
+                               
+                                [notificationIDlistToOpen addObject: [coresPayloadObject objectForKey: coresPayloadKey]];
+                                
+                            }
+                            
+                        }
+                        
+                    }
+
+                }
+                    
+            }
+            
+            // Remove all notifications that are waiting in the notification center:
+            // - setting a 0 value to remove the badge number of the app.
+            [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
+            // - Remove all delivered notifications (items displayed in the notification center of the phone).
+            [[UNUserNotificationCenter currentNotificationCenter] removeAllDeliveredNotifications];
+            // - Remove all pending notifications which are not delivered yet but scheduled (like the local notification created by us to open all notifications at the same time).
+            [[UNUserNotificationCenter currentNotificationCenter] removeAllPendingNotificationRequests];
+            
+            // Create a single string with all notification IDs, concatenating them with a comma.
+            NSString *notificationsToOpen = [notificationIDlistToOpen componentsJoinedByString:@","];
+            
+            // Prepare the data to send the notification data to the CORES Mobie app.
+            pushHandler.isTapped = YES;
+            pushHandler.coldstart = [self.coldstart boolValue];
+            pushHandler.notificationIDsToOpen = notificationsToOpen;
+            pushHandler.notificationsGroupedContentList = @"YES";
+            [pushHandler notificationReceived];
+
+        }];
+        
+    }
+
+}
+
+// Cordova Plugin Push #3.
+// https://github.com/TransformativeMed/cordova-plugin-push/issues/3
+// Method used to create a local/scheduled notification that will be manually displayed at the top of the Notification Center to let the user open all of them in the Inbox page of CORES Mobile.
+- (void) displayOpenAllLocalNotification {
+    
+    // Get data from existing notifications in the notification center
+    [[UNUserNotificationCenter currentNotificationCenter] getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> * _Nonnull notifications) {
+        
+        NSLog(@"Unopened notifications inside the Notification Center: %lu", [notifications count]);
+
+        if([notifications count] > 1){
+            
+            // Prepare the object that will store the content of each notification received to create the grouped notification.
+            NSString *newOpenAllBodyContent = [[NSString alloc] initWithString:@""];
+            
+            // Remove all notifications that are waiting in the notification center:
+            // - setting a 0 value to remove the badge number of the app.
+            [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
+            // - Remove all delivered notifications (items displayed in the notification center of the phone).
+            [[UNUserNotificationCenter currentNotificationCenter] removeAllDeliveredNotifications];
+            // - Remove all pending notifications which are not delivered yet but scheduled (like the local notification created by us to open all notifications at the same time).
+            [[UNUserNotificationCenter currentNotificationCenter] removeAllPendingNotificationRequests];
+           
+            // Trigger a new local push notification that will be displayed at the top of the list to let the user open all push notifications
+            // in the "Notification Viewer" mode of the Inbox page of the CORES Mobile app.
+            UNMutableNotificationContent* content = [[UNMutableNotificationContent alloc] init];
+            
+            int notificationsCount = notifications.count;
+            
+            
+            // Iterate the notifications that were displayed in the OS tray. Usually, the first notification is the single one sent by the APNS and the other is the
+            // local notification created by us (the "open all" notification) to group these notifications when there are more than 1 in the tray.
+            for (int i=0; i<notificationsCount; i++){
+                
+                // Get data of the existing notification that is displayed in the Notification center.
+                UNNotification *existingNotification = [notifications objectAtIndex:i];
+                
+                NSDictionary *userInfo = existingNotification.request.content.userInfo;
+                
+                // Check if the current notification is the one received by the APNS or the "open all" local notification.
+                if ([userInfo objectForKey:@"coresPayload"]) {
+                    
+                    // This is a notification sent by APNS. This notification ALWAYS contains the "coresPayload" object that was included by CORES API (backend) to send
+                    // values used in the CORES Mobile app.
+                    
+                    // Get the content of this notification to include it in the body of the "open all" notification.
+                    for(id key in userInfo) {
+                        
+                        if([key isEqualToString:@"aps"]){
+                            
+                            NSDictionary *apsObject = [userInfo objectForKey:key];
+                            
+                            for(id apsKey in apsObject) {
+                                
+                                if([apsKey isEqualToString:@"alert"]){
+                                    
+                                    NSDictionary *alertObject = [apsObject objectForKey:apsKey];
+                                    
+                                    for(id alertKey in alertObject) {
+                                        
+                                        if([alertKey isEqualToString:@"body"]){
+                                            
+                                            // Grab the body of this notification. It will be included in the body of the "open all" notification.
+                                            newOpenAllBodyContent = [newOpenAllBodyContent stringByAppendingString: alertObject[alertKey] ];
+                                            
+                                            // Add a new line at the end of this string to be able to concatenate values in the body of the "open all" notification
+                                            // and display the body correctly.
+                                            if(i == 0){
+                                                newOpenAllBodyContent = [newOpenAllBodyContent stringByAppendingString: @"\n"];
+                                            }
+                                            
+                                        }
+                                        
+                                    }
+                                    
+                                }
+                                
+                            }
+                            
+                        }
+
+                    }
+                    
+                    // Set the title that will be used in the "open all" notification.
+                    content.title = [NSString localizedUserNotificationStringForKey:@"CORES Mobile \n There are pending notifications" arguments:nil];
+                    
+                } else {
+                    
+                    // "Open all" notification (local notification created to replace the existing notifications of the tray and simulate have a grouper with the
+                    // content of all of them).
+                    
+                    // Get the content of the existing "open all" notification since we need to update its body to include the new single notification that was received.
+                    UNNotificationContent *existingOpenAllObject = existingNotification.request.content;
+                    NSString *existingOpenAllBody = existingOpenAllObject.body;
+                    
+                    // Get the number of notifications that were grouped by the existing "open all" notification (its body has the content of each received notification
+                    // concatenated by "\n" char.
+                    NSArray *groupedNotificationInOpenAllBody = [existingOpenAllBody componentsSeparatedByString:@"\n"];
+                    
+                    // Build the body of the new "open all" notification that will replace the existing one. It will include the last notification received at the top. We need to set a limit in the number of lines that will be displayed in the body of this new "open all" notification to prevent errors in iOS.
+                    if(groupedNotificationInOpenAllBody.count > 3){
+                        
+                        for (int pos=0; pos < 3; pos++){
+                            
+                            newOpenAllBodyContent = [newOpenAllBodyContent stringByAppendingString: groupedNotificationInOpenAllBody[pos] ];
+                            
+                            if(pos+1 < groupedNotificationInOpenAllBody.count){
+                                newOpenAllBodyContent = [newOpenAllBodyContent stringByAppendingString: @"\n"];
+                            }
+                        }
+                        
+                        newOpenAllBodyContent = [newOpenAllBodyContent stringByAppendingString: @"\n..."];
+                        
+                    } else {
+                        newOpenAllBodyContent = [newOpenAllBodyContent stringByAppendingString: existingOpenAllBody];
+                    }
+                    
+                    // Create the title that will be displayed in this "open all" notification.
+                    content.title = [NSString localizedUserNotificationStringForKey: @"CORES Mobile\nThere are pending notifications" arguments:nil];
+                    
+                }
+                    
+            }
+            
+            // Set the string body of the new "open all" notification.
+            content.body = [NSString localizedUserNotificationStringForKey:newOpenAllBodyContent arguments:nil];
+
+            // Specify a grouping name for this local notification so that the OS understands that this local notification is part of the app and should not replace the existing
+            // that are displayed in the Notification Center.
+            content.threadIdentifier = @"cores-mobile-grouper";
+            
+            // Set an optional text that will be displayed in case there are a lot of notifications.
+            if (@available(iOS 12.0, *)) {
+                content.summaryArgument = @"There are pending notifications";
+            }
+
+            // Deliver the "open all" local notification inmediately.
+            UNTimeIntervalNotificationTrigger* trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:0.1 repeats:NO];
+            UNNotificationRequest* request = [UNNotificationRequest requestWithIdentifier:@"FiveSecond" content:content trigger:trigger];
+
+            // Schedule the notification to display it on screen.
+            UNUserNotificationCenter* center = [UNUserNotificationCenter currentNotificationCenter];
+            [center addNotificationRequest:request withCompletionHandler:nil];
+           
+        }
+       
+    }];
+    
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
