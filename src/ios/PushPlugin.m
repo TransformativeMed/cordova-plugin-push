@@ -215,7 +215,7 @@
                 NSLog(@"PushPlugin.register: setting badge to true");
                 clearBadge = YES;
                 //zero badge
-                // Cordova Plugin Push issues #3. DON'T remove the notifications from the OS tray until they are discarded or opened by the user. Only clean the badge number of the app.
+                // DON'T remove the notifications from the OS tray until they are discarded or opened by the user. Only clean the badge number of the app.
                 // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from the tray should be avoided.
                 // To clear the badge number without remove the notifications from the tray we need to set -1 instead of 0
                 // https://developer.apple.com/forums/thread/7598
@@ -492,7 +492,7 @@
 
     } else {
             
-        // Cordova Plugin Push issue #3. Handle the data of the grouper notification that was pressed by the user. It will have:
+        // Handle the data of the grouper notification that was pressed by the user. It will have:
         // - The list of "notification_id" that were grouped, since these will be used by the CORES Mobile app to display them in the Inbox list page.
 
         // Notification grouper.
