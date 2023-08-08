@@ -63,9 +63,8 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
                                                 name:UIApplicationDidBecomeActiveNotification
                                               object:nil];
 
-    // Cordova Plugin Push issue #1. Define a listener for the UIApplicationDidFinishLaunchingNotification event that will be invoked when the app has  
+    // Define a listener for the UIApplicationDidFinishLaunchingNotification event that will be invoked when the app has  
     // finished launching and ready to present any windows to the user (according to the lifecycle of the iOS app).
-    // https://github.com/TransformativeMed/cordova-plugin-push/issues/1
     // Helpful documentation about lifecycle: https://medium.com/@theiOSzone/briefly-about-the-ios-application-lifecycle-92f0c830b754
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(getDataNotificationLaunchedApp:)
@@ -77,9 +76,7 @@ NSString *const pushPluginApplicationDidBecomeActiveNotification = @"pushPluginA
     return [self pushPluginSwizzledInit];
 }
 
-// Cordova Plugin Push issues #1. This code will be called immediately after UIApplicationDidFinishLaunchingNotification event once the app is opened/loaded correctly.
-// https://github.com/TransformativeMed/cordova-plugin-push/issues/1
-// 
+// This code will be called immediately after UIApplicationDidFinishLaunchingNotification event once the app is opened/loaded correctly.
 - (void)getDataNotificationLaunchedApp:(NSNotification *)notification {
     
     // Check if the app has the following option permissions to display Normal/Critical Push Notifications on screen (sent via APNS), even if the app is on foreground.
