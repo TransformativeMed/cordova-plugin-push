@@ -215,9 +215,9 @@
                 NSLog(@"PushPlugin.register: setting badge to true");
                 clearBadge = YES;
                 //zero badge
-                // DON'T remove the notifications from the OS tray until they are discarded or opened by the user. Only clean the badge number of the app.
-                // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from the tray should be avoided.
-                // To clear the badge number without remove the notifications from the tray we need to set -1 instead of 0
+                // DON'T remove the notifications from the Notification Center until they are discarded or opened by the user. Only clean the badge number of the app.
+                // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from it should be avoided.
+                // To clear the badge number without remove the notifications from the Notification Center we need to set -1 instead of 0
                 // https://developer.apple.com/forums/thread/7598
                 [[UIApplication sharedApplication] setApplicationIconBadgeNumber:-1];
             }
@@ -493,7 +493,7 @@
     } else {
             
         // Handle the data of the grouper notification that was pressed by the user. It will have:
-        // - The list of "notification_id" that were grouped, since these will be used by the CORES Mobile app to display them in the Inbox list page.
+        // - The list of "notification_id" that were grouped, since these will be used by the app to display them in the Inbox list page.
 
         // Notification grouper.
         
@@ -536,9 +536,9 @@
 }
 
 /*
- Method used to remove a notification from the OS tray by a specific notID. If the provided notID doesn't match with any notification that means
- that ID belongs to a notification that was removed by the notification grouper and it should be removed from the tray.
- IMPORTANT: This method used by CORES Mobile, since we need to be able to remove the notification grouper that was
+ Method used to remove a notification (single or the grouper summary notification) from the Notification Center by a specific "notID". 
+ If the provided notID doesn't match with any notification that means  that ID belongs to a notification that was grouped in the grouper summary
+  notification and it should be removed from the Notification Center.
  */
 - (void)removeNotificationFromTray:(CDVInvokedUrlCommand *)command
 {
@@ -546,10 +546,10 @@
     NSMutableDictionary* options = [command.arguments objectAtIndex:0];
     NSNumber *notId = [options objectForKey:@"notification_id"];
 
-    // Get the list of notifications (local and delivered) from the OS tray.
+    // Get the list of notifications displayed in the Notification Center.
     [[UNUserNotificationCenter currentNotificationCenter] getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> * _Nonnull notifications) {
         
-        //The server sends the notifications with a specific "notId" to be able to identify each notification in the tray.
+        //The server sends the notifications with a specific "notId" to be able to identify each notification in the Notification Center.
         
         NSPredicate *matchingNotificationPredicate = [NSPredicate predicateWithFormat:@"request.content.userInfo.notId == %@", notId];
         NSArray<UNNotification *> *matchingNotifications = [notifications filteredArrayUsingPredicate:matchingNotificationPredicate];
@@ -560,10 +560,10 @@
         
         if(matchingNotificationIdentifiers.count > 0){
             
-            // Remove the specific notification from the OS tray.
+            // Remove the specific notification from the Notification Center.
             [[UNUserNotificationCenter currentNotificationCenter] removeDeliveredNotificationsWithIdentifiers:matchingNotificationIdentifiers];
             
-            // Return the response to the CORES Mobile JS app.
+            // Return the response to the app.
             NSString *message = [NSString stringWithFormat:@"Cleared notification with ID: %@", notId];
             CDVPluginResult *commandResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:message];
             [self.commandDelegate sendPluginResult:commandResult callbackId:command.callbackId];
@@ -571,7 +571,7 @@
         } else {
 
             // If the notID does not match any notification that means the ID corresponds to a notification that was replaced by the notification grouper.
-            // Remove all items from the OS tray, since the notification grouper is the only item displayed in the tray.
+            // Remove all items from the Notification Center, since the notification grouper is the only item displayed in it.
          
             [[UNUserNotificationCenter currentNotificationCenter] removeAllDeliveredNotifications];
             [[UNUserNotificationCenter currentNotificationCenter] removeAllPendingNotificationRequests];
