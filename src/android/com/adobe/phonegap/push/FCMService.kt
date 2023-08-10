@@ -587,10 +587,19 @@ class FCMService : FirebaseMessagingService() {
     Log.d(TAG, "stored sound=$soundOption")
     Log.d(TAG, "stored vibrate=$vibrateOption")
 
+    // Check if the notification behavior/content must be manually changed according to the value in its payload received from Firebase. 
+    // The app will change according to the following:
+    // - Type: It can be NORMAL and CRITICAL. Each type determines the behavior of the push when it is displayed on screen by the OS.
+    // - Sound and Vibration: The payload will include more details about the sound and vibration values to be used in the notification.
+    if (extras != null) {
+      forcePhoneBehaviorOnCustomNotifications(context, extras, mBuilder)
+    };
+
     /*
      * Notification Vibration
      */
-    setNotificationVibration(extras, vibrateOption, mBuilder)
+    // Commented since the vibration will be flexed in the forcePhoneBehaviorOnCustomNotifications function.
+    //setNotificationVibration(extras, vibrateOption, mBuilder)
 
     /*
      * Notification Icon Color
@@ -629,9 +638,10 @@ class FCMService : FirebaseMessagingService() {
     /*
      * Notification Sound
      */
-    if (soundOption) {
-      setNotificationSound(extras, mBuilder)
-    }
+    // Commented since the sound will be flexed in the forcePhoneBehaviorOnCustomNotifications function.
+    //if (soundOption) {
+      //setNotificationSound(extras, mBuilder)
+    //}
 
     /*
      *  LED Notification
@@ -691,6 +701,159 @@ class FCMService : FirebaseMessagingService() {
       }
     }
 
+  }
+
+  /**
+   * Function used to check if the received notification must change its behavior according to the following:
+   * - Type: Critical and Normal notifications must be handled differently, since they have a sound and vibration that can be dynamically changed from the API validating its payload.
+   * - Vibration and Sound: these values are overwritten to fix several problems encountered in this library.
+   */
+  private fun forcePhoneBehaviorOnCustomNotifications(
+    context: Context,
+    extras: Bundle,
+    mBuilder: NotificationCompat.Builder
+  ) {
+    var ringtone: Ringtone? = null
+
+    // Define a default vibration pattern.
+    var pattern: LongArray? = null
+
+    // Initialize the vibrator service.
+    val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+
+    // Check if the payload defines a custom sound to play.
+    val soundname = extras.getString(PushConstants.SOUND)
+    var soundFile: Uri? = null
+
+    // If the sound value is not present in the payload then we will omit the sound.
+    if (soundname != null && !(soundname == "")) {
+      if (soundname == PushConstants.SOUND_DEFAULT) {
+
+        // Get the path of the default notification sound used by the phone.
+        // Since each Android device uses its own sound, we must validate if the default sound is available otherwise we will get the sound of the alarm or ringtone.
+        soundFile = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        if (soundFile == null) {
+          soundFile = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+          if (soundFile == null) {
+            soundFile = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+          }
+        }
+      } else {
+
+        // Get the sound file from the app folder.
+        soundFile =
+          Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.packageName + "/raw/" + soundname)
+      }
+
+      // Initialize the ringtone service.
+      ringtone = RingtoneManager.getRingtone(applicationContext, soundFile)
+      // Always set the max volume of the phone to play the notification sound.
+      ringtone.volume = 100f
+    }
+
+    // Check if the payload includes a vibration pattern to use.
+    val vibrationPattern = extras.getString(PushConstants.VIBRATION_PATTERN)
+    if (vibrationPattern != null) {
+
+      // Check if the notification must vibrate.
+      val items =
+        vibrationPattern.replace("\\[".toRegex(), "").replace("\\]".toRegex(), "").split(",")
+          .toTypedArray()
+
+      if(items.size == 1 && items[0].trim().isEmpty()){
+
+        // Vibration not specified.
+        Log.d(TAG, "Vibration not specified.")
+      } else {
+        val results = LongArray(items.size)
+        for (i in items.indices) {
+          try {
+            results[i] = items[i].trim { it <= ' ' }.toLong()
+          } catch (nfe: java.lang.NumberFormatException) {
+          }
+        }
+
+        // Assign the vibration pattern to use.
+        pattern = results
+      }
+    }
+
+    // Check the notification type.
+    if (extras.getString(PushConstants.NOTIFICATION_CORES_TYPE) == PushConstants.NOTIFICATION_CRITICAL_CORES_TYPE) {
+      Log.d(TAG, "Critical notification received")
+      /**
+       * IMPORTANT:
+       * The phone must play a sound no matter if the phone is on silent/DND (Do Not Disturb phone mode), also must show the alert in the notification drawer and vibrate in a specific pattern.
+       */
+
+      // Since we added a new filter policy in the "Do not disturb" settings, we need to set the category of this push notification to be able to display it on screen
+      // even if the "Do not disturb" is currently activated.
+      mBuilder.setCategory(NotificationCompat.CATEGORY_ALARM)
+      try {
+
+        // Set the ringtone as ALARM to be able to play the sound no matter if the phone is silenced or in DND mode.
+        ringtone!!.streamType = AudioManager.STREAM_ALARM
+
+        // Initialize the audio services to be able to get/change the phone's sound settings.
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        // Get the current sound setting.
+        val currentRingerMode = audioManager.ringerMode
+        // Change the sound mode to "Normal" that will allow us to play a sound.
+        audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+        if (ringtone != null) {
+
+          // Play the sound.
+          try {
+            ringtone.play()
+
+            // Return the sound settings to its original value (for example: if the phone was in silent mode and a critical notification is received then
+            // we will change the sound settings to "Normal" and later we will return the settings to silent.
+            audioManager.ringerMode = currentRingerMode
+          } catch (e: java.lang.Exception) {
+            e.printStackTrace()
+          }
+        }
+      } catch (e: java.lang.Exception) {
+        e.printStackTrace()
+      }
+    } else if (extras.getString(PushConstants.NOTIFICATION_CORES_TYPE) == PushConstants.NOTIFICATION_NORMAL_CORES_TYPE) {
+      Log.d(TAG, "Normal notification received")
+
+      // The phone will play a default system sound and a basic vibration.
+      if (ringtone != null) {
+
+        // Play the sound.
+        try {
+
+          // Set the ringtone type as a notification sound.
+          ringtone.streamType = AudioManager.STREAM_NOTIFICATION
+          ringtone.play()
+        } catch (e: java.lang.Exception) {
+          e.printStackTrace()
+        }
+      }
+    }
+
+    // Define the vibration patter.
+    val audioAttributes = AudioAttributes.Builder()
+      .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+      .setUsage(AudioAttributes.USAGE_ALARM)
+      .build()
+
+    // Vibrate the phone.
+    try {
+      if (pattern != null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          val ve = VibrationEffect.createWaveform(pattern, -1)
+          vibrator.vibrate(ve, audioAttributes)
+        } else {
+          //deprecated in API 26
+          vibrator.vibrate(pattern, -1)
+        }
+      }
+    } catch (e: java.lang.Exception) {
+      e.printStackTrace()
+    }
   }
 
   /**
