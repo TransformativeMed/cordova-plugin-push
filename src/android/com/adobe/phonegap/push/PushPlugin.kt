@@ -1,12 +1,13 @@
 package com.adobe.phonegap.push
 
+import android.R
 import android.annotation.SuppressLint
 import android.annotation.TargetApi
-import android.app.Activity
-import android.app.NotificationChannel
-import android.app.NotificationManager
+import android.app.*
 import android.content.ContentResolver
 import android.content.Context
+import android.content.DialogInterface
+import android.content.Intent
 import android.content.res.Resources.NotFoundException
 import android.media.AudioAttributes
 import android.net.Uri
@@ -14,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.google.android.gms.tasks.Tasks
@@ -45,6 +47,8 @@ class PushPlugin : CordovaPlugin() {
     private var pushContext: CallbackContext? = null
     private var gWebView: CordovaWebView? = null
     private val gCachedExtras = Collections.synchronizedList(ArrayList<Bundle>())
+
+    private const val GRANTED_POLICY_ACCESS = 109
 
     /**
      *
@@ -296,6 +300,7 @@ class PushPlugin : CordovaPlugin() {
     }
   }
 
+  @SuppressLint("NewApi")
   private fun getNotificationChannelSound(channelData: JSONObject): Pair<Uri?, AudioAttributes?> {
     val audioAttributes = AudioAttributes.Builder()
       .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -373,6 +378,44 @@ class PushPlugin : CordovaPlugin() {
     }
   }
 
+
+  /**
+   * Method invoked once the user is returned from the System app.
+   *
+   * @param requestCode The request code originally supplied to startActivityForResult(),
+   * allowing you to identify who this result came from.
+   * @param resultCode  The integer result code returned by the child activity through its setResult().
+   * @param intent      An Intent, which can return result data to the caller (various data can be attached to Intent "extras").
+   */
+  @RequiresApi(Build.VERSION_CODES.P)
+  override fun onActivityResult(requestCode: Int, resultCode: Int, intent: Intent?) {
+    if (requestCode >= GRANTED_POLICY_ACCESS) {
+
+      // Check if the app has permission to modify the DO NOT DISTURB option and settings.
+      val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+      // Check if the OS device is using a valid Android OS version.
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+
+        // Check if the "Do not disturb" option is currently activated. This mode will always hide all notifications UNLESS we add this app in the exception list.
+        // The "INTERRUPTION_FILTER_ALL" constant indicates that no notifications are suppressed.
+        if (notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) {
+
+          // Once we have access to the "Do not disturb" settings, we add a new filter that will allow us to display our notifications on screen
+          // even if option is currently activated.
+          notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+          notificationManager.setNotificationPolicy(
+            NotificationManager.Policy(
+              NotificationManager.Policy.PRIORITY_CATEGORY_ALARMS,
+              0,
+              0
+            )
+          )
+        }
+      }
+    }
+  }
+
   /**
    * Performs various push plugin related tasks:
    *
@@ -388,6 +431,7 @@ class PushPlugin : CordovaPlugin() {
    *  - Create Channel
    *  - Delete Channel
    *  - List Channels
+   *  - Change DoNotDisturb settings
    *
    *  @param action
    *  @param data
@@ -420,6 +464,7 @@ class PushPlugin : CordovaPlugin() {
       PushConstants.DELETE_CHANNEL -> executeActionDeleteChannel(data, callbackContext)
       PushConstants.LIST_CHANNELS -> executeActionListChannels(callbackContext)
       PushConstants.CLEAR_NOTIFICATION -> executeActionClearNotification(data, callbackContext)
+      PushConstants.CHANGE_DND_FROM_CORES -> executeModifyDNDsettings(data, callbackContext)
       else -> {
         Log.e(TAG, "Execute: Invalid Action $action")
         callbackContext.sendPluginResult(PluginResult(PluginResult.Status.INVALID_ACTION))
@@ -429,11 +474,76 @@ class PushPlugin : CordovaPlugin() {
     return true
   }
 
+  /**
+   * Method to invoke the function that will open the "Do Not Disturb" settings of the phone.
+   */
+  private fun executeModifyDNDsettings(data: JSONArray, callbackContext: CallbackContext) {
+    cordova.threadPool.execute {
+      try {
+
+        openDoNotDisturbSettings();
+
+        callbackContext.success()
+
+      } catch (e: java.lang.Exception) {
+        callbackContext.error(e.message)
+      }
+    }
+  }
+
+  /**
+   * Method to open the "Do Not Disturb" phone settings.
+   */
+  private fun openDoNotDisturbSettings(){
+    // Request to the user access to the DND settings. If this is granted then the DND settings will be opened.
+    val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    applicationContext.startActivity(intent)
+    cordova.startActivityForResult(this, intent, GRANTED_POLICY_ACCESS)
+  }
+
   private fun executeActionInitialize(data: JSONArray, callbackContext: CallbackContext) {
     // Better Logging
     fun formatLogMessage(msg: String): String = "Execute::Initialize: ($msg)"
 
+    // Check if the plugin was re-initialized to ask access to the "Do Not Disturb" permission.
+    try {
+      if (data.getJSONObject(0).getJSONObject("android")
+          .has("requestDoNotDisturbAccess") === true && data.getJSONObject(0)
+          .getJSONObject("android").get("requestDoNotDisturbAccess").equals(true)
+      ) {
+
+        // Check if the app has permission to modify the DO NOT DISTURB settings.
+        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // Check if the current device is using a valid Android OS version.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+
+          // Validate if the user already has the permission.
+          if (!notificationManager.isNotificationPolicyAccessGranted) {
+
+            // Display a message to the user indicating the app will redirect him to the Settings -> Sound & Notifcation -> Do Not Disturb Access.
+            AlertDialog.Builder(cordova.activity)
+              .setTitle("Enable 'Do Not Disturb' Access?")
+              .setMessage("In order to always receive critical result alerts when your phone is muted or in Do Not Disturb mode, you will need to enable 'Do Not Disturb' access.")
+              .setIcon(R.drawable.ic_dialog_alert)
+              .setPositiveButton(
+                "OK",
+                DialogInterface.OnClickListener { dialog, whichButton -> // Trigger an intent to redirect the user to the System settings of the phone.
+                  openDoNotDisturbSettings()
+                })
+              .setNegativeButton("NOT RIGHT NOW", DialogInterface.OnClickListener { dialog, which ->
+                // There is no logic at the moment for this button. It will close this dialog.
+              }).show()
+          }
+        }
+      }
+    } catch (e: java.lang.Exception) {
+      e.printStackTrace()
+    }
+
     cordova.threadPool.execute(Runnable {
+
       Log.v(TAG, formatLogMessage("Data=$data"))
 
       pushContext = callbackContext

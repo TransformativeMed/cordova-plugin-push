@@ -7,6 +7,9 @@ package com.adobe.phonegap.push
  */
 @Suppress("HardCodedStringLiteral")
 object PushConstants {
+ 
+  const val CHANGE_DND_FROM_CORES: String = "openDNDsettings"
+
   const val COM_ADOBE_PHONEGAP_PUSH: String = "com.adobe.phonegap.push"
   const val REGISTRATION_ID: String = "registrationId"
   const val REGISTRATION_TYPE: String = "registrationType"
