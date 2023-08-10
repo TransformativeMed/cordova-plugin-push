@@ -335,6 +335,10 @@ module.exports = {
     exec(successCallback, errorCallback, 'PushNotification', 'listChannels', []);
   },
 
+  removeNotificationFromOStray: function(notification_id, successCallback, errorCallback){
+    exec(successCallback, errorCallback, 'PushNotification', 'removeNotificationFromTray', [{notification_id: notification_id}]);
+  },
+
   /**
    * PushNotification Object.
    *

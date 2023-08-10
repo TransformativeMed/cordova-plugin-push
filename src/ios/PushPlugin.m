@@ -39,6 +39,9 @@
 @synthesize notificationMessage;
 @synthesize isInline;
 @synthesize coldstart;
+@synthesize isTapped;
+@synthesize notificationIDsToOpen;
+@synthesize notificationsGroupedContentList;
 
 @synthesize callbackId;
 @synthesize notificationCallbackId;
@@ -211,7 +214,12 @@
             } else {
                 NSLog(@"PushPlugin.register: setting badge to true");
                 clearBadge = YES;
-                [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
+                //zero badge
+                // DON'T remove the notifications from the Notification Center until they are discarded or opened by the user. Only clean the badge number of the app.
+                // Also, when the user does a down swipe to open the Notification Center this event is triggered, that is why removing the notifications from it should be avoided.
+                // To clear the badge number without remove the notifications from the Notification Center we need to set -1 instead of 0
+                // https://developer.apple.com/forums/thread/7598
+                [[UIApplication sharedApplication] setApplicationIconBadgeNumber:-1];
             }
             NSLog(@"PushPlugin.register: clear badge is set to %d", clearBadge);
 
@@ -405,6 +413,8 @@
 
     if (notificationMessage && self.callbackId != nil)
     {
+        // Single notification.
+
         NSMutableDictionary* message = [NSMutableDictionary dictionaryWithCapacity:4];
         NSMutableDictionary* additionalData = [NSMutableDictionary dictionaryWithCapacity:4];
 
@@ -462,6 +472,13 @@
             [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"coldstart"];
         }
 
+         if(isTapped){
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"isTapped"];
+            
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"isTapped"];
+        }
+
         [message setObject:additionalData forKey:@"additionalData"];
 
         // send notification message
@@ -471,7 +488,98 @@
 
         self.coldstart = NO;
         self.notificationMessage = nil;
+        self.isTapped = NO;
+
+    } else {
+            
+        // Handle the data of the grouper notification that was pressed by the user. It will have:
+        // - The list of "notification_id" that were grouped, since these will be used by the app to display them in the Inbox list page.
+
+        // Notification grouper.
+        
+        NSMutableDictionary* message = [NSMutableDictionary dictionaryWithCapacity:4];
+        NSMutableDictionary* additionalData = [NSMutableDictionary dictionaryWithCapacity:4];
+        
+        if (isInline) {
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"foreground"];
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"foreground"];
+        }
+
+        if (coldstart) {
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"coldstart"];
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"coldstart"];
+        }
+        
+        if(isTapped){
+            [additionalData setObject:[NSNumber numberWithBool:YES] forKey:@"isTapped"];
+            
+            [additionalData setObject:notificationsGroupedContentList forKey:@"notificationsGroupedContentList"];
+            
+        } else {
+            [additionalData setObject:[NSNumber numberWithBool:NO] forKey:@"isTapped"];
+        }
+        
+        [message setObject:additionalData forKey:@"additionalData"];
+        
+        // send notification message
+        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:message];
+        [pluginResult setKeepCallbackAsBool:YES];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
+
+        self.coldstart = NO;
+        self.notificationMessage = nil;
+        self.isTapped = NO;
+
     }
+}
+
+/*
+ Method used to remove a notification (single or the grouper summary notification) from the Notification Center by a specific "notID". 
+ If the provided notID doesn't match with any notification that means  that ID belongs to a notification that was grouped in the grouper summary
+  notification and it should be removed from the Notification Center.
+ */
+- (void)removeNotificationFromTray:(CDVInvokedUrlCommand *)command
+{
+
+    NSMutableDictionary* options = [command.arguments objectAtIndex:0];
+    NSNumber *notId = [options objectForKey:@"notification_id"];
+
+    // Get the list of notifications displayed in the Notification Center.
+    [[UNUserNotificationCenter currentNotificationCenter] getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> * _Nonnull notifications) {
+        
+        //The server sends the notifications with a specific "notId" to be able to identify each notification in the Notification Center.
+        
+        NSPredicate *matchingNotificationPredicate = [NSPredicate predicateWithFormat:@"request.content.userInfo.notId == %@", notId];
+        NSArray<UNNotification *> *matchingNotifications = [notifications filteredArrayUsingPredicate:matchingNotificationPredicate];
+        NSMutableArray<NSString *> *matchingNotificationIdentifiers = [NSMutableArray array];
+        for (UNNotification *notification in matchingNotifications) {
+            [matchingNotificationIdentifiers addObject:notification.request.identifier];
+        }
+        
+        if(matchingNotificationIdentifiers.count > 0){
+            
+            // Remove the specific notification from the Notification Center.
+            [[UNUserNotificationCenter currentNotificationCenter] removeDeliveredNotificationsWithIdentifiers:matchingNotificationIdentifiers];
+            
+            // Return the response to the app.
+            NSString *message = [NSString stringWithFormat:@"Cleared notification with ID: %@", notId];
+            CDVPluginResult *commandResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:message];
+            [self.commandDelegate sendPluginResult:commandResult callbackId:command.callbackId];
+            
+        } else {
+
+            // If the notID does not match any notification that means the ID corresponds to a notification that was replaced by the notification grouper.
+            // Remove all items from the Notification Center, since the notification grouper is the only item displayed in it.
+         
+            [[UNUserNotificationCenter currentNotificationCenter] removeAllDeliveredNotifications];
+            [[UNUserNotificationCenter currentNotificationCenter] removeAllPendingNotificationRequests];
+            
+        }
+        
+    }];
+    
 }
 
 - (void)clearNotification:(CDVInvokedUrlCommand *)command
@@ -518,6 +626,7 @@
 
 - (void)clearAllNotifications:(CDVInvokedUrlCommand *)command
 {
+    //zero badge
     [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
 
     NSString* message = [NSString stringWithFormat:@"cleared all notifications"];

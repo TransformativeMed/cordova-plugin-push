@@ -38,6 +38,9 @@
     NSString *notificationCallbackId;
     NSString *callback;
     BOOL    clearBadge;
+    BOOL    isTapped;
+    NSString *notificationIDsToOpen;
+    NSString *notificationsGroupedContentList;
 
     NSMutableDictionary *handlerObj;
     void (^completionHandler)(UIBackgroundFetchResult);
@@ -53,6 +56,9 @@
 @property BOOL isInline;
 @property BOOL coldstart;
 @property BOOL clearBadge;
+@property BOOL isTapped;
+@property (nonatomic, copy) NSString *notificationIDsToOpen;
+@property (nonatomic, copy) NSString *notificationsGroupedContentList;
 @property (nonatomic, strong) NSMutableDictionary *handlerObj;
 
 - (void)init:(CDVInvokedUrlCommand*)command;
