@@ -98,8 +98,8 @@ NSTimer *checkPluginReadyTimer;
         }
     }];
     
-    // When the app is closed and is opened by a push notification (received in the phone and/or tapped by the user from the Notification Center), the data of that notification 
-    // must be captured to be sent to the app once it has been started. This is important to prevent the data of the pressed notification from being lost when the app is opened.
+    // If the app is closed and the phone receives 2 notifications almost at the same time, without the following code, the data of the first notification that woke up the app
+    // is missed and the app just receives the data of the second notification.
     // Also, the coldstart flag will be updated to let us know if the app was opened from scratch.
     if (notification)
     {
