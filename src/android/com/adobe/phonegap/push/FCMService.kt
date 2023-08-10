@@ -995,7 +995,6 @@ class FCMService : FirebaseMessagingService() {
     notificationManager: NotificationManager
   ): NotificationCompat.Builder {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      var channelID: String? = null
 
       if (extras != null) {
         channelID = extras.getString(PushConstants.ANDROID_CHANNEL_ID)
