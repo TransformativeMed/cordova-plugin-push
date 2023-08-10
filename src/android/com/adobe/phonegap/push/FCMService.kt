@@ -9,9 +9,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.*
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.Settings
 import android.text.Html
 import android.text.Spanned
@@ -24,6 +30,7 @@ import com.adobe.phonegap.push.PushPlugin.Companion.sendExtras
 import com.adobe.phonegap.push.PushPlugin.Companion.setApplicationIconBadgeNumber
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.transformativemed.coresmobile.R
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -33,6 +40,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.util.*
+import java.util.stream.Collectors
+
 
 /**
  * Firebase Cloud Messaging Service Class
@@ -43,7 +52,10 @@ class FCMService : FirebaseMessagingService() {
   companion object {
     private const val TAG = "${PushPlugin.PREFIX_TAG} (FCMService)"
 
-    private val messageMap = HashMap<Int, ArrayList<String?>>()
+    private var messageMap = HashMap<Int, ArrayList<String?>>()
+    // Array that will store the ID's of the notifications received. Each ID will be an unique value that represents an item in the CORES Mobile app.
+    private var coresNotificationIDlist = ArrayList<String?>()
+    private var channelID: String? = null
 
     private val FLAG_MUTABLE = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       PendingIntent.FLAG_MUTABLE
@@ -109,6 +121,58 @@ class FCMService : FirebaseMessagingService() {
   }
 
   /**
+   * Function to get the list of the received notifications and the content of each of them .
+   */
+  fun getMessageMap(): HashMap<Int, ArrayList<String?>> {
+    return messageMap
+  }
+
+  /**
+   * Function to add to a list the ID of the push notification received. This ID represents an item within CORES Mobile app.
+   */
+  fun setCoresNotificationIDTolist(coresNotificationID: String?) {
+    if (coresNotificationIDlist.size === 0) {
+      coresNotificationIDlist.add(coresNotificationID!!)
+    } else {
+      val existsNotificationID = coresNotificationIDlist.contains(coresNotificationID)
+      if (!existsNotificationID) {
+        coresNotificationIDlist.add(coresNotificationID!!)
+      }
+    }
+  }
+
+  /**
+   * Function that returns the list of IDs of the received notifications. Each ID represents an item within the CORES Mobile app.
+   */
+  fun getCoresNotificationIDlist(): ArrayList<String?>? {
+    return coresNotificationIDlist
+  }
+
+  /**
+   * Function to reset the list of IDs of the received notifications. This list stores the IDs used in the CORES Mobile app.
+   */
+  fun cleanCoresNotificationIDList() {
+    coresNotificationIDlist =  ArrayList<String?>()
+  }
+
+  /**
+   * Function to re-initialize the list that stores the content of the received notifications.
+   */
+  fun cleanNotificationList() {
+    messageMap = HashMap<Int, ArrayList<String?>>()
+  }
+
+  /**
+   * Function used to remove an ID from the list of the received notifications. This list stores the IDs of each notification that represents an item in the CORES Mobile app.
+   */
+  fun removeCoresNotificationIDfromList(coresNotificationID: String?) {
+    val indexInList = coresNotificationIDlist.indexOf(coresNotificationID)
+    if (indexInList != -1) {
+      coresNotificationIDlist.removeAt(indexInList)
+    }
+  }
+
+  /**
    * On Message Received
    */
   override fun onMessageReceived(message: RemoteMessage) {
@@ -144,19 +208,25 @@ class FCMService : FirebaseMessagingService() {
       // Foreground
       extras.putBoolean(PushConstants.FOREGROUND, isInForeground)
 
-      // if we are in the foreground and forceShow is `false` only send data
+      
+
+      // if we are in the foreground and forceShow is `false` only send data.
+      // By default when a notification is received, its data should include flags indicating whether the app is in the foreground and whether it was pressed.
       val forceShow = pushSharedPref.getBoolean(PushConstants.FORCE_SHOW, false)
       if (!forceShow && isInForeground) {
         Log.d(TAG, "Do Not Force & Is In Foreground")
         extras.putBoolean(PushConstants.COLDSTART, false)
+        extras.putBoolean(PushConstants.FOREGROUND, true)
         sendExtras(extras)
       } else if (forceShow && isInForeground) {
         Log.d(TAG, "Force & Is In Foreground")
         extras.putBoolean(PushConstants.COLDSTART, false)
+        extras.putBoolean(PushConstants.FOREGROUND, true);
         showNotificationIfPossible(extras)
       } else {
         Log.d(TAG, "In Background")
         extras.putBoolean(PushConstants.COLDSTART, isActive)
+        extras.putBoolean(PushConstants.FOREGROUND, false);
         showNotificationIfPossible(extras)
       }
     }
@@ -406,6 +476,7 @@ class FCMService : FirebaseMessagingService() {
       val contentAvailable = it.getString(PushConstants.CONTENT_AVAILABLE)
       val forceStart = it.getString(PushConstants.FORCE_START)
       val badgeCount = extractBadgeCount(extras)
+      
 
       if (badgeCount >= 0) {
         setApplicationIconBadgeNumber(context, badgeCount)
@@ -556,6 +627,7 @@ class FCMService : FirebaseMessagingService() {
     /*
      * Notification Sound
      */
+    
     if (soundOption) {
       setNotificationSound(extras, mBuilder)
     }
@@ -594,7 +666,164 @@ class FCMService : FirebaseMessagingService() {
      * Notification add actions
      */
     createActions(extras, mBuilder, notId)
-    mNotificationManager.notify(appName, notId, mBuilder.build())
+
+    // Get the number of notifications that are currently displayed in the Notification drawer.
+    val activeNotifications = mNotificationManager.activeNotifications
+
+    // If there is no items in the notification drawer when a notification is received then it should be displayed as a single item.
+    // If not then a notification grouper will be displayed, since this grouper will replace the existing notifications and group them into a single item.
+    if (activeNotifications.size == 0) {
+
+      // Invoke the OS to display the single notification.
+      mNotificationManager.notify(appName, notId, mBuilder.build())
+
+    } else {
+
+      // Remove from the notification drawer the existing grouper, since it will refreshed to include the content of the new received notification.
+      if (activeNotifications[0].id != PushConstants.GROUP_NOTIFICATION_ID) {
+        mNotificationManager.cancelAll()
+      }
+
+      // Create the grouper notification.
+      if (extras != null) {
+        displayGrouperNotification(extras, context, channelID, mNotificationManager)
+      }
+    }
+
+  }
+
+  /**
+   * Method used to create and display a local notification that will group into a single item all the received notifications of the notification drawer.
+   * @param extras Bundle - object that will be stored in the notification.
+   * @param context Context
+   * @param channelID String - Channel used to create the notifications.
+   * @param mNotificationManager NotificationManager
+   */
+  fun displayGrouperNotification(
+    extras: Bundle,
+    context: Context,
+    channelID: String?,
+    mNotificationManager: NotificationManager
+  ) {
+    val notificationsToGroup = HashMap<String, String?>()
+    var random = SecureRandom()
+    var requestCode = random.nextInt()
+    var appName = getAppName(context)
+
+    // Create the notification style. This is used to create a notification that will display as a list with the content of each notification.
+    val notificationInbox = NotificationCompat.InboxStyle()
+      .setBigContentTitle(fromHtml(extras.getString(PushConstants.TITLE)))
+    var countValidNotifications = 0
+
+    // Iterate the list of items displayed in the notification drawer.
+    for (key in messageMap.keys) {
+      val receivedNotificationContent: ArrayList<String?>? = messageMap[key]
+      for (i in receivedNotificationContent!!.size - 1 downTo 0) {
+
+        // Ignore the notifications that are already processed (with an empty content).
+        if (receivedNotificationContent.get(i)?.length!! > 0) {
+          notificationInbox.addLine(fromHtml(receivedNotificationContent[i]))
+          notificationsToGroup[key.toString()] = receivedNotificationContent[i]
+          countValidNotifications++
+        }
+      }
+    }
+
+    // Prepare the summary text that will be displayed in the notification grouper.
+    val sizeListMessage = countValidNotifications.toString()
+    var stacking: String? = messageMap.size.toString() + " more"
+
+    // Adjust the summary text according to the current number of notifications.
+    if (extras.getString(PushConstants.SUMMARY_TEXT) != null) {
+      if (countValidNotifications == 1) {
+        stacking = "There is %n% notification".replace("%n%", sizeListMessage)
+      } else {
+        stacking = extras.getString(PushConstants.SUMMARY_TEXT)
+        stacking = stacking!!.replace("%n%", sizeListMessage)
+      }
+    }
+    notificationInbox.setSummaryText(fromHtml(stacking))
+
+    // Set in the bundle the list of notification IDs that are grouped by this notification. The bundle is an object that represents the data of the notification.
+    extras.putString(
+      PushConstants.BUNDLE_KEY_OPEN_ALL_NOTIFICATIONS,
+      coresNotificationIDlist.stream().collect(Collectors.joining(","))
+    )
+
+    // Also set in the bundle the list of the grouper notifications (including their content) as a JSON string.
+    val jsonObject = JSONObject(notificationsToGroup as Map<*, *>?)
+    extras.putString(
+      PushConstants.BUNDLE_KEY_NOTIFICATIONS_GROUPED_WITH_CONTENT,
+      jsonObject.toString()
+    )
+
+    // Create the intent that will help us to identify when this notification is manually dismissed by the user from the notification drawer.
+    val dismissedNotificationIntent = Intent(context, PushDismissedHandler::class.java)
+    dismissedNotificationIntent.putExtra(PushConstants.PUSH_BUNDLE, extras)
+    dismissedNotificationIntent.putExtra(PushConstants.NOT_ID, PushConstants.GROUP_NOTIFICATION_ID)
+    dismissedNotificationIntent.putExtra(PushConstants.DISMISSED, true)
+    dismissedNotificationIntent.action = PushConstants.PUSH_DISMISSED
+    requestCode = random.nextInt()
+    var deleteIntent: PendingIntent? = null
+
+    // Create the delete intent that will be invoked when the user dismisses manually this notification.
+    deleteIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      PendingIntent.getBroadcast(
+        context, requestCode, dismissedNotificationIntent,
+        PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_MUTABLE
+      )
+    } else {
+      PendingIntent.getBroadcast(
+        context, requestCode, dismissedNotificationIntent,
+        PendingIntent.FLAG_CANCEL_CURRENT
+      )
+    }
+
+    // Create the intent that will be used to listen when this notification is clicked by the user from the notification drawer.
+    val clickedNotificationIntent = Intent(context, PushHandlerActivity::class.java)
+    clickedNotificationIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    clickedNotificationIntent.putExtra(PushConstants.PUSH_BUNDLE, extras)
+    clickedNotificationIntent.putExtra(PushConstants.NOT_ID, PushConstants.GROUP_NOTIFICATION_ID)
+    clickedNotificationIntent.putExtra(PushConstants.BUNDLE_KEY_OPEN_GROUPED_NOTIFICATIONS, true)
+    random = SecureRandom()
+    requestCode = random.nextInt()
+    var contentIntent: PendingIntent? = null
+    contentIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      PendingIntent.getActivity(
+        context, requestCode, clickedNotificationIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+      )
+    } else {
+      PendingIntent.getActivity(
+        context, requestCode, clickedNotificationIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT
+      )
+    }
+
+    // Create the notification that will be grouping the received notifications.
+    val summaryBuilder = NotificationCompat.Builder(
+      context,
+      channelID!!
+    )
+      .setStyle(notificationInbox)
+      .setExtras(extras)
+      .setGroup(PushConstants.GROUP_KEY)
+      .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+      .setGroupSummary(true)
+      .setDeleteIntent(deleteIntent)
+      .setContentIntent(contentIntent)
+      .setOnlyAlertOnce(true)
+      .setVibrate(longArrayOf(0L))
+      .setSilent(true)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      summaryBuilder.setSmallIcon(R.drawable.cores_mobile_push_icon)
+    } else {
+      summaryBuilder.setSmallIcon(context.applicationInfo.icon)
+    }
+    val summaryNotification = summaryBuilder.build()
+
+    // Display in the notification drawer this notification that will group all notifications.
+    mNotificationManager.notify(appName, PushConstants.GROUP_NOTIFICATION_ID, summaryNotification)
   }
 
   private fun createNotificationBuilder(
@@ -847,6 +1076,28 @@ class FCMService : FirebaseMessagingService() {
   ) {
     extras?.let {
       val message = it.getString(PushConstants.MESSAGE)
+
+      // Set in the extra of the notification the ID that represents this item inside the CORES Mobile app.
+      // This will be helpful to identify this notification inside the CORES Mobile app when it is pressed by the user.
+      for (key in extras.keySet()) {
+        if (key == "coresPayload") {
+          val jsonStringCoresPayload = extras[key].toString()
+          var jsonCoresPayload: JSONObject? = null
+          try {
+            jsonCoresPayload = JSONObject(jsonStringCoresPayload)
+
+            // The notification ID will indicate to the CORES Mobile app the reminder that should be displayed in the Inbox list.
+            val coresNotificationID = jsonCoresPayload.getString("notification_id")
+            mBuilder.extras.putString(PushConstants.BUNDLE_KEY_CORES_NOTIFICATION_ID, coresNotificationID)
+
+            // Store the CORES notification ID to use it later.
+            setCoresNotificationIDTolist(coresNotificationID)
+            break
+          } catch (e: JSONException) {
+            e.printStackTrace()
+          }
+        }
+      }
 
       when (it.getString(PushConstants.STYLE, PushConstants.STYLE_TEXT)) {
         PushConstants.STYLE_INBOX -> {
@@ -1119,7 +1370,19 @@ class FCMService : FirebaseMessagingService() {
         }
       }
 
-      mBuilder.setSmallIcon(iconId)
+      // Fix for the issue: https://github.com/havesource/cordova-plugin-push/issues/214 - Push notification icon missing (showing white box instead of app icon) 
+      // in notification tray in Android 12 (SDK 32).
+      // Since this problem has not been fixed by the authors, CORES Mobile app applies the following fix: 
+      // - The "config.xml" file is manually adding in the "drawable" folder the "cores_mobile_push_icon" image files that will be used as icon when a notification 
+      //    is displayed in the notification drawer. These files are moved to the compiled app when the "cordova build..." command runs.
+      // Check the current OS version.
+      if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        // Load from the resource folder (drawable) the icon of the app.
+        mBuilder.setSmallIcon(R.drawable.cores_mobile_push_icon);
+      } else {
+        // Use the default icon of the app.
+        mBuilder.setSmallIcon(iconId);
+      }
     }
   }
 

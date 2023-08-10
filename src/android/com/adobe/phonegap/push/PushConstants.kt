@@ -7,7 +7,15 @@ package com.adobe.phonegap.push
  */
 @Suppress("HardCodedStringLiteral")
 object PushConstants {
- 
+  const val CORES_NOTIFICATION_ID_KEY: String = "notification_id"
+  const val BUNDLE_KEY_NOTIFICATIONS_GROUPED_WITH_CONTENT: String = "notificationsGroupedContentList"
+  const val GROUP_KEY: String = "com.transformativemed.coresmobile"
+  const val GROUP_NOTIFICATION_ID: Int = 2
+  const val BUNDLE_KEY_CORES_NOTIFICATION_ID: String = "cores_notification_id"
+  const val BUNDLE_KEY_OPEN_ALL_NOTIFICATIONS: String = "notificationsToOpen"
+  const val BUNDLE_KEY_OPEN_GROUPED_NOTIFICATIONS: String = "openGroupedNotifications"
+  const val OPEN_ALL_GROUP_KEY: String = "open.all.notifications.coresmobile"
+  const val OPEN_ALL_NOTIFICATION_ID: Int = 1
   const val CHANGE_DND_FROM_CORES: String = "openDNDsettings"
 
   const val COM_ADOBE_PHONEGAP_PUSH: String = "com.adobe.phonegap.push"

@@ -107,6 +107,10 @@ class PushPlugin : CordovaPlugin() {
                 json.put(key, value)
               }
 
+              key == PushConstants.BUNDLE_KEY_OPEN_ALL_NOTIFICATIONS -> {
+                additionalData.put(key, extras.getBoolean(PushConstants.BUNDLE_KEY_OPEN_ALL_NOTIFICATIONS))
+              }
+
               key == PushConstants.COLDSTART -> {
                 additionalData.put(key, extras.getBoolean(PushConstants.COLDSTART))
               }
@@ -464,6 +468,7 @@ class PushPlugin : CordovaPlugin() {
       PushConstants.DELETE_CHANNEL -> executeActionDeleteChannel(data, callbackContext)
       PushConstants.LIST_CHANNELS -> executeActionListChannels(callbackContext)
       PushConstants.CLEAR_NOTIFICATION -> executeActionClearNotification(data, callbackContext)
+      PushConstants.REMOVE_NOTIFICATION_FROM_TRAY_BY_NOTIFICATION_ID -> executeRemoveNotificationFromTray(data, callbackContext)
       PushConstants.CHANGE_DND_FROM_CORES -> executeModifyDNDsettings(data, callbackContext)
       else -> {
         Log.e(TAG, "Execute: Invalid Action $action")
