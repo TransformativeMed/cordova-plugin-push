@@ -208,8 +208,6 @@ class FCMService : FirebaseMessagingService() {
       // Foreground
       extras.putBoolean(PushConstants.FOREGROUND, isInForeground)
 
-      
-
       // if we are in the foreground and forceShow is `false` only send data.
       // By default when a notification is received, its data should include flags indicating whether the app is in the foreground and whether it was pressed.
       val forceShow = pushSharedPref.getBoolean(PushConstants.FORCE_SHOW, false)
@@ -217,16 +215,19 @@ class FCMService : FirebaseMessagingService() {
         Log.d(TAG, "Do Not Force & Is In Foreground")
         extras.putBoolean(PushConstants.COLDSTART, false)
         extras.putBoolean(PushConstants.FOREGROUND, true)
+        extras.putBoolean(PushConstants.TAPPED, false);
         sendExtras(extras)
       } else if (forceShow && isInForeground) {
         Log.d(TAG, "Force & Is In Foreground")
         extras.putBoolean(PushConstants.COLDSTART, false)
         extras.putBoolean(PushConstants.FOREGROUND, true);
+        extras.putBoolean(PushConstants.TAPPED, false);
         showNotificationIfPossible(extras)
       } else {
         Log.d(TAG, "In Background")
         extras.putBoolean(PushConstants.COLDSTART, isActive)
         extras.putBoolean(PushConstants.FOREGROUND, false);
+        extras.putBoolean(PushConstants.TAPPED, false);
         showNotificationIfPossible(extras)
       }
     }
@@ -476,7 +477,7 @@ class FCMService : FirebaseMessagingService() {
       val contentAvailable = it.getString(PushConstants.CONTENT_AVAILABLE)
       val forceStart = it.getString(PushConstants.FORCE_START)
       val badgeCount = extractBadgeCount(extras)
-      
+      val tapped = it.getString(PushConstants.TAPPED)
 
       if (badgeCount >= 0) {
         setApplicationIconBadgeNumber(context, badgeCount)
@@ -492,6 +493,7 @@ class FCMService : FirebaseMessagingService() {
       Log.d(TAG, "contentAvailable=$contentAvailable")
       Log.d(TAG, "forceStart=$forceStart")
       Log.d(TAG, "badgeCount=$badgeCount")
+      Log.d(TAG, "isTapped =$tapped");
 
       val hasMessage = message != null && message.isNotEmpty()
       val hasTitle = title != null && title.isNotEmpty()
@@ -627,7 +629,6 @@ class FCMService : FirebaseMessagingService() {
     /*
      * Notification Sound
      */
-    
     if (soundOption) {
       setNotificationSound(extras, mBuilder)
     }

@@ -81,6 +81,7 @@ class BackgroundHandlerActivity : Activity() {
 
       originalExtras.putBoolean(PushConstants.FOREGROUND, false)
       originalExtras.putBoolean(PushConstants.COLDSTART, !PushPlugin.isActive)
+      originalExtras.putBoolean(PushConstants.TAPPED, false)
       originalExtras.putBoolean(PushConstants.DISMISSED, extras.getBoolean(PushConstants.DISMISSED))
       originalExtras.putString(
         PushConstants.ACTION_CALLBACK,

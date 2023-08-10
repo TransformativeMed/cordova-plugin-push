@@ -17,6 +17,11 @@ object PushConstants {
   const val OPEN_ALL_GROUP_KEY: String = "open.all.notifications.coresmobile"
   const val OPEN_ALL_NOTIFICATION_ID: Int = 1
   const val CHANGE_DND_FROM_CORES: String = "openDNDsettings"
+  const val REMOVE_NOTIFICATION_FROM_TRAY_BY_NOTIFICATION_ID: String = "removeNotificationFromTray"
+  const val NOTIFICATION_CORES_TYPE: String = "notificationCORESType"
+  const val NOTIFICATION_CRITICAL_CORES_TYPE: String = "critical"
+  const val NOTIFICATION_NORMAL_CORES_TYPE: String = "normal"
+  const val TAPPED: String = "isTapped"
 
   const val COM_ADOBE_PHONEGAP_PUSH: String = "com.adobe.phonegap.push"
   const val REGISTRATION_ID: String = "registrationId"

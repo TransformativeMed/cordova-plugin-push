@@ -111,6 +111,10 @@ class PushPlugin : CordovaPlugin() {
                 additionalData.put(key, extras.getBoolean(PushConstants.BUNDLE_KEY_OPEN_ALL_NOTIFICATIONS))
               }
 
+              key == PushConstants.TAPPED -> {
+                additionalData.put(key, extras.getBoolean(PushConstants.TAPPED))
+              }
+
               key == PushConstants.COLDSTART -> {
                 additionalData.put(key, extras.getBoolean(PushConstants.COLDSTART))
               }
