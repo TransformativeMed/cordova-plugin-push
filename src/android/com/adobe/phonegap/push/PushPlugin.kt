@@ -439,6 +439,7 @@ class PushPlugin : CordovaPlugin() {
    *  - Create Channel
    *  - Delete Channel
    *  - List Channels
+   *  - Remove specific notification from OS tray
    *  - Change DoNotDisturb settings
    *
    *  @param action
@@ -510,6 +511,131 @@ class PushPlugin : CordovaPlugin() {
     applicationContext.startActivity(intent)
     cordova.startActivityForResult(this, intent, GRANTED_POLICY_ACCESS)
   }
+
+  /**
+   * Method used to remove a notification (single or the notification grouper) by an ID from the Notification drawer.
+   */
+  @SuppressLint("NewApi")
+  private fun executeRemoveNotificationFromTray(data: JSONArray, callbackContext: CallbackContext) {
+    cordova.threadPool.execute {
+      try {
+
+        // Get the ID that was sent by the app to remove a notification from the notification drawer.
+        var coresNotificationID = data.getJSONObject(0).getInt(PushConstants.CORES_NOTIFICATION_ID_KEY)
+
+        val fcm = FCMService()
+
+        // Remove the notification from the notification drawer. If there is a single notification it will be removed; if the notification grouper is the only item displayed then
+        // it will be removed lines below.
+        notificationManager.cancel(appName, coresNotificationID)
+
+        // Get the list of notifications that are currently displayed in the notification drawer.
+        val activeNotifications = notificationManager.activeNotifications
+
+        // Get the list of notifications displayed in the notification drawer, since we need to find the notification grouper and update its content that is displayed, since a notification was removed.
+        for (statusBarNotification in activeNotifications) {
+
+          val notification: Notification = statusBarNotification.notification
+
+          if (statusBarNotification.id == PushConstants.GROUP_NOTIFICATION_ID) {
+
+            // Refresh the content of the notification grouper. This content was created summarizing the values of the received notifications. The push notifications were stored by the FCMService class.
+            // If the content of the notification grouper is empty then it also should be removed from the notification drawer.
+
+            // Get the list of IDs of the notifications that were grouped by this notification and iterate them to check if any of them were removed from the notification drawer.
+            val stringListIDconcatenated: String? = notification.extras.getString(PushConstants.BUNDLE_KEY_OPEN_ALL_NOTIFICATIONS)
+            val groupedNotificationIDList: MutableList<String> = stringListIDconcatenated!!.split(",").toMutableList()
+
+            for (groupedNotificationID in groupedNotificationIDList) {
+              if (groupedNotificationID == coresNotificationID.toString()) {
+
+                // Update the variable used in this plugin to store the list of received notifications.
+                groupedNotificationIDList.remove(groupedNotificationID)
+                break
+              }
+            }
+
+            // Update the content of the notification grouper.
+            // First, update the local list that is used in this plugin to create the content of the notification grouper.
+
+            // Check if the list of received push notifications is empty.
+            if (fcm.getMessageMap().size == 0) {
+
+              // When the app was closed and the user opens it, this list can be empty even if there are notifications in the notification drawer.
+              // So, get the notifications that were grouped extracting them from the data of the grouper.
+              try {
+
+                // Get the JSON string stored in the bundle object of the notification grouper and convert it to a JSON object that can be iterated.
+                val jsonObjectGroupedNotificationsWithContent = JSONObject(
+                  notification.extras.getString(PushConstants.BUNDLE_KEY_NOTIFICATIONS_GROUPED_WITH_CONTENT)
+                )
+
+                // Iterate the notification objects to add them to the list of received push notifications.
+                val keys: JSONArray = jsonObjectGroupedNotificationsWithContent.names()
+                for (i in 0 until keys.length()) {
+                  val key = keys.getString(i)
+                  val notificationContent: String =
+                    jsonObjectGroupedNotificationsWithContent.getString(key)
+
+                  // Ignore the canceled notification.
+                  if (Integer.valueOf(key) != coresNotificationID) {
+
+                    // Add the current notification to the list.
+                    fcm.setNotification(Integer.valueOf(key), notificationContent)
+                    fcm.setCoresNotificationIDTolist(key)
+                  }
+                }
+              } catch (e: JSONException) {
+                e.printStackTrace()
+              }
+            } else {
+
+              // Remove from the received and processed lists the notification that was canceled.
+              fcm.setNotification(coresNotificationID, "")
+              fcm.removeCoresNotificationIDfromList(coresNotificationID.toString())
+
+            }
+
+            // Check if there are enough notifications in the notification drawer to continue displaying the notification grouper.
+            if (groupedNotificationIDList.size === 0) {
+
+              // Remove all notifications from the notification drawer.
+              notificationManager.cancelAll()
+
+              // Clear the lists used to identify when a push notification is received in this plugin.
+              fcm.cleanNotificationList()
+              fcm.cleanCoresNotificationIDList()
+
+            } else {
+
+              // Refresh the notification grouper to update the displayed summary text (replacing the current notification grouper with a new one but using the same data to
+              // avoid losing the notifications that are currently grouped by it).
+              fcm.displayGrouperNotification(
+                notification.extras,
+                applicationContext,
+                notification.getChannelId(),
+                notificationManager
+              )
+
+            }
+          } else {
+
+            // A single notification object.
+
+            // We need to remove the canceled notification from the lists used to manage the received push.
+            fcm.setNotification(coresNotificationID, "")
+            fcm.removeCoresNotificationIDfromList(coresNotificationID.toString())
+
+          }
+        }
+        callbackContext.success()
+
+      } catch (e: java.lang.Exception) {
+        callbackContext.error(e.message)
+      }
+    }
+  }
+
 
   private fun executeActionInitialize(data: JSONArray, callbackContext: CallbackContext) {
     // Better Logging
