@@ -339,6 +339,10 @@ module.exports = {
     exec(successCallback, errorCallback, 'PushNotification', 'removeNotificationFromTray', [{notification_id: notification_id}]);
   },
 
+  checkDoNotDisturbPermission: function(successCallback, errorCallback){
+    exec(successCallback, errorCallback, 'PushNotification', 'openDNDsettings', []);
+  },
+
   /**
    * PushNotification Object.
    *

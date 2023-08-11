@@ -9,9 +9,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.*
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.Settings
 import android.text.Html
 import android.text.Spanned
@@ -24,6 +30,7 @@ import com.adobe.phonegap.push.PushPlugin.Companion.sendExtras
 import com.adobe.phonegap.push.PushPlugin.Companion.setApplicationIconBadgeNumber
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.transformativemed.coresmobile.R
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -33,6 +40,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.util.*
+import java.util.stream.Collectors
+
 
 /**
  * Firebase Cloud Messaging Service Class
@@ -43,7 +52,10 @@ class FCMService : FirebaseMessagingService() {
   companion object {
     private const val TAG = "${PushPlugin.PREFIX_TAG} (FCMService)"
 
-    private val messageMap = HashMap<Int, ArrayList<String?>>()
+    private var messageMap = HashMap<Int, ArrayList<String?>>()
+    // Array that will store the ID's of the notifications received. Each ID will be an unique value that represents an item in the CORES Mobile app.
+    private var coresNotificationIDlist = ArrayList<String?>()
+    private var channelID: String? = null
 
     private val FLAG_MUTABLE = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       PendingIntent.FLAG_MUTABLE
@@ -109,6 +121,58 @@ class FCMService : FirebaseMessagingService() {
   }
 
   /**
+   * Function to get the list of the received notifications and the content of each of them .
+   */
+  fun getMessageMap(): HashMap<Int, ArrayList<String?>> {
+    return messageMap
+  }
+
+  /**
+   * Function to add to a list the ID of the push notification received. This ID represents an item within CORES Mobile app.
+   */
+  fun setCoresNotificationIDTolist(coresNotificationID: String?) {
+    if (coresNotificationIDlist.size === 0) {
+      coresNotificationIDlist.add(coresNotificationID!!)
+    } else {
+      val existsNotificationID = coresNotificationIDlist.contains(coresNotificationID)
+      if (!existsNotificationID) {
+        coresNotificationIDlist.add(coresNotificationID!!)
+      }
+    }
+  }
+
+  /**
+   * Function that returns the list of IDs of the received notifications. Each ID represents an item within the CORES Mobile app.
+   */
+  fun getCoresNotificationIDlist(): ArrayList<String?>? {
+    return coresNotificationIDlist
+  }
+
+  /**
+   * Function to reset the list of IDs of the received notifications. This list stores the IDs used in the CORES Mobile app.
+   */
+  fun cleanCoresNotificationIDList() {
+    coresNotificationIDlist =  ArrayList<String?>()
+  }
+
+  /**
+   * Function to re-initialize the list that stores the content of the received notifications.
+   */
+  fun cleanNotificationList() {
+    messageMap = HashMap<Int, ArrayList<String?>>()
+  }
+
+  /**
+   * Function used to remove an ID from the list of the received notifications. This list stores the IDs of each notification that represents an item in the CORES Mobile app.
+   */
+  fun removeCoresNotificationIDfromList(coresNotificationID: String?) {
+    val indexInList = coresNotificationIDlist.indexOf(coresNotificationID)
+    if (indexInList != -1) {
+      coresNotificationIDlist.removeAt(indexInList)
+    }
+  }
+
+  /**
    * On Message Received
    */
   override fun onMessageReceived(message: RemoteMessage) {
@@ -144,19 +208,26 @@ class FCMService : FirebaseMessagingService() {
       // Foreground
       extras.putBoolean(PushConstants.FOREGROUND, isInForeground)
 
-      // if we are in the foreground and forceShow is `false` only send data
+      // if we are in the foreground and forceShow is `false` only send data.
+      // By default when a notification is received, its data should include flags indicating whether the app is in the foreground and whether it was pressed.
       val forceShow = pushSharedPref.getBoolean(PushConstants.FORCE_SHOW, false)
       if (!forceShow && isInForeground) {
         Log.d(TAG, "Do Not Force & Is In Foreground")
         extras.putBoolean(PushConstants.COLDSTART, false)
+        extras.putBoolean(PushConstants.FOREGROUND, true)
+        extras.putBoolean(PushConstants.TAPPED, false);
         sendExtras(extras)
       } else if (forceShow && isInForeground) {
         Log.d(TAG, "Force & Is In Foreground")
         extras.putBoolean(PushConstants.COLDSTART, false)
+        extras.putBoolean(PushConstants.FOREGROUND, true);
+        extras.putBoolean(PushConstants.TAPPED, false);
         showNotificationIfPossible(extras)
       } else {
         Log.d(TAG, "In Background")
         extras.putBoolean(PushConstants.COLDSTART, isActive)
+        extras.putBoolean(PushConstants.FOREGROUND, false);
+        extras.putBoolean(PushConstants.TAPPED, false);
         showNotificationIfPossible(extras)
       }
     }
@@ -406,6 +477,7 @@ class FCMService : FirebaseMessagingService() {
       val contentAvailable = it.getString(PushConstants.CONTENT_AVAILABLE)
       val forceStart = it.getString(PushConstants.FORCE_START)
       val badgeCount = extractBadgeCount(extras)
+      val tapped = it.getString(PushConstants.TAPPED)
 
       if (badgeCount >= 0) {
         setApplicationIconBadgeNumber(context, badgeCount)
@@ -421,6 +493,7 @@ class FCMService : FirebaseMessagingService() {
       Log.d(TAG, "contentAvailable=$contentAvailable")
       Log.d(TAG, "forceStart=$forceStart")
       Log.d(TAG, "badgeCount=$badgeCount")
+      Log.d(TAG, "isTapped =$tapped");
 
       val hasMessage = message != null && message.isNotEmpty()
       val hasTitle = title != null && title.isNotEmpty()
@@ -514,10 +587,19 @@ class FCMService : FirebaseMessagingService() {
     Log.d(TAG, "stored sound=$soundOption")
     Log.d(TAG, "stored vibrate=$vibrateOption")
 
+    // Check if the notification behavior/content must be manually changed according to the value in its payload received from Firebase. 
+    // The app will change according to the following:
+    // - Type: It can be NORMAL and CRITICAL. Each type determines the behavior of the push when it is displayed on screen by the OS.
+    // - Sound and Vibration: The payload will include more details about the sound and vibration values to be used in the notification.
+    if (extras != null) {
+      forcePhoneBehaviorOnCustomNotifications(context, extras, mBuilder)
+    };
+
     /*
      * Notification Vibration
      */
-    setNotificationVibration(extras, vibrateOption, mBuilder)
+    // Commented since the vibration will be flexed in the forcePhoneBehaviorOnCustomNotifications function.
+    //setNotificationVibration(extras, vibrateOption, mBuilder)
 
     /*
      * Notification Icon Color
@@ -556,9 +638,10 @@ class FCMService : FirebaseMessagingService() {
     /*
      * Notification Sound
      */
-    if (soundOption) {
-      setNotificationSound(extras, mBuilder)
-    }
+    // Commented since the sound will be flexed in the forcePhoneBehaviorOnCustomNotifications function.
+    //if (soundOption) {
+      //setNotificationSound(extras, mBuilder)
+    //}
 
     /*
      *  LED Notification
@@ -594,7 +677,317 @@ class FCMService : FirebaseMessagingService() {
      * Notification add actions
      */
     createActions(extras, mBuilder, notId)
-    mNotificationManager.notify(appName, notId, mBuilder.build())
+
+    // Get the number of notifications that are currently displayed in the Notification drawer.
+    val activeNotifications = mNotificationManager.activeNotifications
+
+    // If there is no items in the notification drawer when a notification is received then it should be displayed as a single item.
+    // If not then a notification grouper will be displayed, since this grouper will replace the existing notifications and group them into a single item.
+    if (activeNotifications.size == 0) {
+
+      // Invoke the OS to display the single notification.
+      mNotificationManager.notify(appName, notId, mBuilder.build())
+
+    } else {
+
+      // Remove from the notification drawer the existing grouper, since it will refreshed to include the content of the new received notification.
+      if (activeNotifications[0].id != PushConstants.GROUP_NOTIFICATION_ID) {
+        mNotificationManager.cancelAll()
+      }
+
+      // Create the grouper notification.
+      if (extras != null) {
+        displayGrouperNotification(extras, context, channelID, mNotificationManager)
+      }
+    }
+
+  }
+
+  /**
+   * Function used to check if the received notification must change its behavior according to the following:
+   * - Type: Critical and Normal notifications must be handled differently, since they have a sound and vibration that can be dynamically changed from the API validating its payload.
+   * - Vibration and Sound: these values are overwritten to fix several problems encountered in this library.
+   */
+  private fun forcePhoneBehaviorOnCustomNotifications(
+    context: Context,
+    extras: Bundle,
+    mBuilder: NotificationCompat.Builder
+  ) {
+    var ringtone: Ringtone? = null
+
+    // Define a default vibration pattern.
+    var pattern: LongArray? = null
+
+    // Initialize the vibrator service.
+    val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+
+    // Check if the payload defines a custom sound to play.
+    val soundname = extras.getString(PushConstants.SOUND)
+    var soundFile: Uri? = null
+
+    // If the sound value is not present in the payload then we will omit the sound.
+    if (soundname != null && !(soundname == "")) {
+      if (soundname == PushConstants.SOUND_DEFAULT) {
+
+        // Get the path of the default notification sound used by the phone.
+        // Since each Android device uses its own sound, we must validate if the default sound is available otherwise we will get the sound of the alarm or ringtone.
+        soundFile = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        if (soundFile == null) {
+          soundFile = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+          if (soundFile == null) {
+            soundFile = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+          }
+        }
+      } else {
+
+        // Get the sound file from the app folder.
+        soundFile =
+          Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.packageName + "/raw/" + soundname)
+      }
+
+      // Initialize the ringtone service.
+      ringtone = RingtoneManager.getRingtone(applicationContext, soundFile)
+      // Always set the max volume of the phone to play the notification sound.
+      ringtone.volume = 100f
+    }
+
+    // Check if the payload includes a vibration pattern to use.
+    val vibrationPattern = extras.getString(PushConstants.VIBRATION_PATTERN)
+    if (vibrationPattern != null) {
+
+      // Check if the notification must vibrate.
+      val items =
+        vibrationPattern.replace("\\[".toRegex(), "").replace("\\]".toRegex(), "").split(",")
+          .toTypedArray()
+
+      if(items.size == 1 && items[0].trim().isEmpty()){
+
+        // Vibration not specified.
+        Log.d(TAG, "Vibration not specified.")
+      } else {
+        val results = LongArray(items.size)
+        for (i in items.indices) {
+          try {
+            results[i] = items[i].trim { it <= ' ' }.toLong()
+          } catch (nfe: java.lang.NumberFormatException) {
+          }
+        }
+
+        // Assign the vibration pattern to use.
+        pattern = results
+      }
+    }
+
+    // Check the notification type.
+    if (extras.getString(PushConstants.NOTIFICATION_CORES_TYPE) == PushConstants.NOTIFICATION_CRITICAL_CORES_TYPE) {
+      Log.d(TAG, "Critical notification received")
+      /**
+       * IMPORTANT:
+       * The phone must play a sound no matter if the phone is on silent/DND (Do Not Disturb phone mode), also must show the alert in the notification drawer and vibrate in a specific pattern.
+       */
+
+      // Since we added a new filter policy in the "Do not disturb" settings, we need to set the category of this push notification to be able to display it on screen
+      // even if the "Do not disturb" is currently activated.
+      mBuilder.setCategory(NotificationCompat.CATEGORY_ALARM)
+      try {
+
+        // Set the ringtone as ALARM to be able to play the sound no matter if the phone is silenced or in DND mode.
+        ringtone!!.streamType = AudioManager.STREAM_ALARM
+
+        // Initialize the audio services to be able to get/change the phone's sound settings.
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        // Get the current sound setting.
+        val currentRingerMode = audioManager.ringerMode
+        // Change the sound mode to "Normal" that will allow us to play a sound.
+        audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+        if (ringtone != null) {
+
+          // Play the sound.
+          try {
+            ringtone.play()
+
+            // Return the sound settings to its original value (for example: if the phone was in silent mode and a critical notification is received then
+            // we will change the sound settings to "Normal" and later we will return the settings to silent.
+            audioManager.ringerMode = currentRingerMode
+          } catch (e: java.lang.Exception) {
+            e.printStackTrace()
+          }
+        }
+      } catch (e: java.lang.Exception) {
+        e.printStackTrace()
+      }
+    } else if (extras.getString(PushConstants.NOTIFICATION_CORES_TYPE) == PushConstants.NOTIFICATION_NORMAL_CORES_TYPE) {
+      Log.d(TAG, "Normal notification received")
+
+      // The phone will play a default system sound and a basic vibration.
+      if (ringtone != null) {
+
+        // Play the sound.
+        try {
+
+          // Set the ringtone type as a notification sound.
+          ringtone.streamType = AudioManager.STREAM_NOTIFICATION
+          ringtone.play()
+        } catch (e: java.lang.Exception) {
+          e.printStackTrace()
+        }
+      }
+    }
+
+    // Define the vibration patter.
+    val audioAttributes = AudioAttributes.Builder()
+      .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+      .setUsage(AudioAttributes.USAGE_ALARM)
+      .build()
+
+    // Vibrate the phone.
+    try {
+      if (pattern != null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          val ve = VibrationEffect.createWaveform(pattern, -1)
+          vibrator.vibrate(ve, audioAttributes)
+        } else {
+          //deprecated in API 26
+          vibrator.vibrate(pattern, -1)
+        }
+      }
+    } catch (e: java.lang.Exception) {
+      e.printStackTrace()
+    }
+  }
+
+  /**
+   * Method used to create and display a local notification that will group into a single item all the received notifications of the notification drawer.
+   * @param extras Bundle - object that will be stored in the notification.
+   * @param context Context
+   * @param channelID String - Channel used to create the notifications.
+   * @param mNotificationManager NotificationManager
+   */
+  fun displayGrouperNotification(
+    extras: Bundle,
+    context: Context,
+    channelID: String?,
+    mNotificationManager: NotificationManager
+  ) {
+    val notificationsToGroup = HashMap<String, String?>()
+    var random = SecureRandom()
+    var requestCode = random.nextInt()
+    var appName = getAppName(context)
+
+    // Create the notification style. This is used to create a notification that will display as a list with the content of each notification.
+    val notificationInbox = NotificationCompat.InboxStyle()
+      .setBigContentTitle(fromHtml(extras.getString(PushConstants.TITLE)))
+    var countValidNotifications = 0
+
+    // Iterate the list of items displayed in the notification drawer.
+    for (key in messageMap.keys) {
+      val receivedNotificationContent: ArrayList<String?>? = messageMap[key]
+      for (i in receivedNotificationContent!!.size - 1 downTo 0) {
+
+        // Ignore the notifications that are already processed (with an empty content).
+        if (receivedNotificationContent.get(i)?.length!! > 0) {
+          notificationInbox.addLine(fromHtml(receivedNotificationContent[i]))
+          notificationsToGroup[key.toString()] = receivedNotificationContent[i]
+          countValidNotifications++
+        }
+      }
+    }
+
+    // Prepare the summary text that will be displayed in the notification grouper.
+    val sizeListMessage = countValidNotifications.toString()
+    var stacking: String? = messageMap.size.toString() + " more"
+
+    // Adjust the summary text according to the current number of notifications.
+    if (extras.getString(PushConstants.SUMMARY_TEXT) != null) {
+      if (countValidNotifications == 1) {
+        stacking = "There is %n% notification".replace("%n%", sizeListMessage)
+      } else {
+        stacking = extras.getString(PushConstants.SUMMARY_TEXT)
+        stacking = stacking!!.replace("%n%", sizeListMessage)
+      }
+    }
+    notificationInbox.setSummaryText(fromHtml(stacking))
+
+    // Set in the bundle the list of notification IDs that are grouped by this notification. The bundle is an object that represents the data of the notification.
+    extras.putString(
+      PushConstants.BUNDLE_KEY_OPEN_ALL_NOTIFICATIONS,
+      coresNotificationIDlist.stream().collect(Collectors.joining(","))
+    )
+
+    // Also set in the bundle the list of the grouper notifications (including their content) as a JSON string.
+    val jsonObject = JSONObject(notificationsToGroup as Map<*, *>?)
+    extras.putString(
+      PushConstants.BUNDLE_KEY_NOTIFICATIONS_GROUPED_WITH_CONTENT,
+      jsonObject.toString()
+    )
+
+    // Create the intent that will help us to identify when this notification is manually dismissed by the user from the notification drawer.
+    val dismissedNotificationIntent = Intent(context, PushDismissedHandler::class.java)
+    dismissedNotificationIntent.putExtra(PushConstants.PUSH_BUNDLE, extras)
+    dismissedNotificationIntent.putExtra(PushConstants.NOT_ID, PushConstants.GROUP_NOTIFICATION_ID)
+    dismissedNotificationIntent.putExtra(PushConstants.DISMISSED, true)
+    dismissedNotificationIntent.action = PushConstants.PUSH_DISMISSED
+    requestCode = random.nextInt()
+    var deleteIntent: PendingIntent? = null
+
+    // Create the delete intent that will be invoked when the user dismisses manually this notification.
+    deleteIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      PendingIntent.getBroadcast(
+        context, requestCode, dismissedNotificationIntent,
+        PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_MUTABLE
+      )
+    } else {
+      PendingIntent.getBroadcast(
+        context, requestCode, dismissedNotificationIntent,
+        PendingIntent.FLAG_CANCEL_CURRENT
+      )
+    }
+
+    // Create the intent that will be used to listen when this notification is clicked by the user from the notification drawer.
+    val clickedNotificationIntent = Intent(context, PushHandlerActivity::class.java)
+    clickedNotificationIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    clickedNotificationIntent.putExtra(PushConstants.PUSH_BUNDLE, extras)
+    clickedNotificationIntent.putExtra(PushConstants.NOT_ID, PushConstants.GROUP_NOTIFICATION_ID)
+    clickedNotificationIntent.putExtra(PushConstants.BUNDLE_KEY_OPEN_GROUPED_NOTIFICATIONS, true)
+    random = SecureRandom()
+    requestCode = random.nextInt()
+    var contentIntent: PendingIntent? = null
+    contentIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      PendingIntent.getActivity(
+        context, requestCode, clickedNotificationIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+      )
+    } else {
+      PendingIntent.getActivity(
+        context, requestCode, clickedNotificationIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT
+      )
+    }
+
+    // Create the notification that will be grouping the received notifications.
+    val summaryBuilder = NotificationCompat.Builder(
+      context,
+      channelID!!
+    )
+      .setStyle(notificationInbox)
+      .setExtras(extras)
+      .setGroup(PushConstants.GROUP_KEY)
+      .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+      .setGroupSummary(true)
+      .setDeleteIntent(deleteIntent)
+      .setContentIntent(contentIntent)
+      .setOnlyAlertOnce(true)
+      .setVibrate(longArrayOf(0L))
+      .setSilent(true)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      summaryBuilder.setSmallIcon(R.drawable.cores_mobile_push_icon)
+    } else {
+      summaryBuilder.setSmallIcon(context.applicationInfo.icon)
+    }
+    val summaryNotification = summaryBuilder.build()
+
+    // Display in the notification drawer this notification that will group all notifications.
+    mNotificationManager.notify(appName, PushConstants.GROUP_NOTIFICATION_ID, summaryNotification)
   }
 
   private fun createNotificationBuilder(
@@ -602,7 +995,6 @@ class FCMService : FirebaseMessagingService() {
     notificationManager: NotificationManager
   ): NotificationCompat.Builder {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      var channelID: String? = null
 
       if (extras != null) {
         channelID = extras.getString(PushConstants.ANDROID_CHANNEL_ID)
@@ -847,6 +1239,28 @@ class FCMService : FirebaseMessagingService() {
   ) {
     extras?.let {
       val message = it.getString(PushConstants.MESSAGE)
+
+      // Set in the extra of the notification the ID that represents this item inside the CORES Mobile app.
+      // This will be helpful to identify this notification inside the CORES Mobile app when it is pressed by the user.
+      for (key in extras.keySet()) {
+        if (key == "coresPayload") {
+          val jsonStringCoresPayload = extras[key].toString()
+          var jsonCoresPayload: JSONObject? = null
+          try {
+            jsonCoresPayload = JSONObject(jsonStringCoresPayload)
+
+            // The notification ID will indicate to the CORES Mobile app the reminder that should be displayed in the Inbox list.
+            val coresNotificationID = jsonCoresPayload.getString("notification_id")
+            mBuilder.extras.putString(PushConstants.BUNDLE_KEY_CORES_NOTIFICATION_ID, coresNotificationID)
+
+            // Store the CORES notification ID to use it later.
+            setCoresNotificationIDTolist(coresNotificationID)
+            break
+          } catch (e: JSONException) {
+            e.printStackTrace()
+          }
+        }
+      }
 
       when (it.getString(PushConstants.STYLE, PushConstants.STYLE_TEXT)) {
         PushConstants.STYLE_INBOX -> {
@@ -1119,7 +1533,19 @@ class FCMService : FirebaseMessagingService() {
         }
       }
 
-      mBuilder.setSmallIcon(iconId)
+      // Fix for the issue: https://github.com/havesource/cordova-plugin-push/issues/214 - Push notification icon missing (showing white box instead of app icon) 
+      // in notification tray in Android 12 (SDK 32).
+      // Since this problem has not been fixed by the authors, CORES Mobile app applies the following fix: 
+      // - The "config.xml" file is manually adding in the "drawable" folder the "cores_mobile_push_icon" image files that will be used as icon when a notification 
+      //    is displayed in the notification drawer. These files are moved to the compiled app when the "cordova build..." command runs.
+      // Check the current OS version.
+      if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        // Load from the resource folder (drawable) the icon of the app.
+        mBuilder.setSmallIcon(R.drawable.cores_mobile_push_icon);
+      } else {
+        // Use the default icon of the app.
+        mBuilder.setSmallIcon(iconId);
+      }
     }
   }
 
