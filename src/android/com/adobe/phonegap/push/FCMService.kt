@@ -1002,7 +1002,7 @@ class FCMService : FirebaseMessagingService() {
 
       // if the push payload specifies a channel use it
       return if (channelID != null) {
-        NotificationCompat.Builder(context, channelID)
+        NotificationCompat.Builder(context, channelID!!)
       } else {
         val channels = notificationManager.notificationChannels
 
@@ -1013,7 +1013,7 @@ class FCMService : FirebaseMessagingService() {
         }
 
         Log.d(TAG, "Using channel ID = $channelID")
-        NotificationCompat.Builder(context, channelID)
+        NotificationCompat.Builder(context, channelID!!)
       }
     } else {
       return NotificationCompat.Builder(context)
