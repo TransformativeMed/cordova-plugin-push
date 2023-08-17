@@ -21,7 +21,6 @@ This plugin does not provide a way to determine which platform you are running o
 * [Cloud build support (PG Build, IntelXDK)](docs/PHONEGAP_BUILD.md)
 * [Push notification payload details](docs/PAYLOAD.md)
 * [Contributing](.github/CONTRIBUTING.md)
-* [License (MIT)](MIT-LICENSE)
 
 # Do you like tutorial? You get tutorial!
 
